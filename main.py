@@ -3,6 +3,7 @@ import re
 import json
 import sys
 import os
+import sqlite3
 from datetime import datetime
 
 def clean_spaces(s: str) -> str:
@@ -157,6 +158,77 @@ def parse_matches(html: str):
 
     return results
 
+
+# Database functions ---------------------------------------------------------------------------------------------
+def init_db(db_path: str):
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                captured_at TEXT NOT NULL,
+                source_json TEXT,
+                agent TEXT,
+                time_ago TEXT,
+                map TEXT,
+                placement TEXT,
+                score TEXT,
+                trs INTEGER,
+                rank TEXT,
+                kd REAL,
+                kills INTEGER,
+                deaths INTEGER,
+                assists INTEGER,
+                dd_delta INTEGER,
+                hs_pct REAL,
+                acs INTEGER
+            )
+            """
+        )
+        conn.commit()
+
+def save_matches_to_db(matches, db_path: str, captured_at: str, source_json: str | None = None):
+    if not matches:
+        return 0
+
+    rows = []
+    for match in matches:
+        rows.append(
+            (
+                captured_at,
+                source_json,
+                match.get("agent"),
+                match.get("time_ago"),
+                match.get("map"),
+                match.get("placement"),
+                match.get("score"),
+                match.get("trs"),
+                match.get("rank"),
+                match.get("kd"),
+                match.get("kills"),
+                match.get("deaths"),
+                match.get("assists"),
+                match.get("dd_delta"),
+                match.get("hs_pct"),
+                match.get("acs"),
+            )
+        )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO matches (
+                captured_at, source_json, agent, time_ago, map, placement, score, trs, rank, kd,
+                kills, deaths, assists, dd_delta, hs_pct, acs
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        conn.commit()
+    return len(rows)
+# ----------------------------------------------------------------------------------------------------------------------------
+
+
 if __name__ == "__main__":
     # Accept HTML from stdin so you can paste directly into the terminal.
     # On Windows: paste, then press Ctrl+Z and Enter. On Unix: Ctrl+D.
@@ -185,9 +257,24 @@ if __name__ == "__main__":
     timestamp = datetime.now().strftime("%d-%m-%Y_%H%M%S")
     out_name = f"matches_{timestamp}.json"
     out_path = os.path.join(script_dir, out_name)
+    db_path = os.path.join(script_dir, "matches.db")
+    json_written = False
     try:
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(matches, f, indent=2)
         print(f"Wrote JSON to {out_path}")
+        json_written = True
     except Exception as e:
         print(f"Failed to write JSON file: {e}")
+
+    try:
+        init_db(db_path)
+        inserted = save_matches_to_db(
+            matches,
+            db_path=db_path,
+            captured_at=timestamp,
+            source_json=out_path if json_written else None,
+        )
+        print(f"Stored {inserted} match rows in SQLite DB: {db_path}")
+    except Exception as e:
+        print(f"Failed to write to SQLite DB: {e}")
